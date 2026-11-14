@@ -1,0 +1,70 @@
+name: Build Android APK
+
+on:
+  # Permet de déclencher manuellement la compilation depuis l'onglet Actions
+  workflow_dispatch:
+  # Déclenche automatiquement une compilation release lors du push d'un tag commençant par v (ex: v1.0.0)
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    # 1. Récupérer le code
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    # 2. Configurer l'environnement Java (généralement JDK 17 pour les projets Android modernes)
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '17'
+
+    # 3. Accorder les permissions d'exécution au wrapper Gradle
+    - name: Grant execute permission for gradlew
+      run: chmod +x gradlew
+
+    # 4. Compiler l'APK de débogage (généré à chaque exécution, pour faciliter les tests)
+    - name: Build Debug APK
+      run: ./gradlew assembleDebug
+
+    # 5. Téléverser l'APK de débogage comme Artifact (téléchargeable depuis la page de la tâche)
+    - name: Upload Debug APK
+      uses: actions/upload-artifact@v4
+      with:
+        name: app-debug-apk
+        path: app/build/outputs/apk/debug/*.apk
+
+    # --- Les étapes suivantes ne s'exécutent que lors du push de tags, pour générer la version release ---
+
+    # 6. Décoder le fichier de signature Keystore (si vous avez configuré les Secrets)
+    - name: Decode Keystore
+      if: startsWith(github.ref, 'refs/tags/v')
+      run: |
+        echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > app/keystore.jks
+
+    # 7. Compiler l'APK de release (avec signature)
+    - name: Build Release APK
+      if: startsWith(github.ref, 'refs/tags/v')
+      env:
+        KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+        KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+      run: |
+        ./gradlew assembleRelease \
+          -Pandroid.injected.signing.store.file=$GITHUB_WORKSPACE/app/keystore.jks \
+          -Pandroid.injected.signing.store.password=$KEYSTORE_PASSWORD \
+          -Pandroid.injected.signing.key.alias=$KEY_ALIAS \
+          -Pandroid.injected.signing.key.password=$KEY_PASSWORD
+
+    # 8. Téléverser l'APK de release comme Artifact
+    - name: Upload Release APK
+      if: startsWith(github.ref, 'refs/tags/v')
+      uses: actions/upload-artifact@v4
+      with:
+        name: app-release-apk
+        path: app/build/outputs/apk/release/*.apk
